@@ -16,6 +16,20 @@ SYSTEM = ("Extract the requested fields from the input and return a single JSON 
           "Respond with ONLY the JSON — no preamble, no explanation, no markdown fences.")
 
 
+def _strict_schema(schema):
+    """Structured outputs / strict tools require every object schema to explicitly set
+    ``additionalProperties: false`` (Bedrock enforces this; a 400 otherwise). Deep-copy the schema
+    with that added on every object node, without mutating the task's original schema."""
+    if isinstance(schema, dict):
+        out = {k: _strict_schema(v) for k, v in schema.items()}
+        if out.get("type") == "object" or "properties" in out:
+            out.setdefault("additionalProperties", False)
+        return out
+    if isinstance(schema, list):
+        return [_strict_schema(v) for v in schema]
+    return schema
+
+
 def _dummy(prop: dict):
     t = prop.get("type")
     t = t[0] if isinstance(t, list) else t
@@ -99,7 +113,7 @@ class ClaudeProvider:
         resp = self.client.messages.create(
             model=self.model, max_tokens=512,
             messages=[{"role": "user", "content": f"Extract fields. Input:\n{task['input']}"}],
-            output_config={"format": {"type": "json_schema", "schema": task["schema"]}})
+            output_config={"format": {"type": "json_schema", "schema": _strict_schema(task["schema"])}})
         return next((b.text for b in resp.content if b.type == "text"), "")
 
     def _strict_tool(self, task) -> str:
@@ -107,7 +121,7 @@ class ClaudeProvider:
             model=self.model, max_tokens=512,
             messages=[{"role": "user", "content": f"Extract fields. Input:\n{task['input']}"}],
             tools=[{"name": "record", "description": "Record the extracted fields.",
-                    "strict": True, "input_schema": task["schema"]}],
+                    "strict": True, "input_schema": _strict_schema(task["schema"])}],
             tool_choice={"type": "tool", "name": "record"})
         for b in resp.content:
             if b.type == "tool_use":
@@ -115,5 +129,31 @@ class ClaudeProvider:
         return ""
 
 
+class BedrockProvider(ClaudeProvider):
+    """Same four strategies as ClaudeProvider, but Claude on AWS Bedrock — for machines that have AWS
+    credentials but no direct ANTHROPIC_API_KEY. output_config.format and strict tool use are both
+    supported on Bedrock, so the native/strict_tool strategies work unchanged."""
+
+    def __init__(self, model: str | None = None):
+        from anthropic import AnthropicBedrock
+
+        self.client = AnthropicBedrock(aws_region=os.getenv("AWS_REGION", "us-east-1"))
+        self.model = model or os.getenv(
+            "SOEVAL_BEDROCK_MODEL", "global.anthropic.claude-haiku-4-5-20251001-v1:0")
+
+
+def _has_aws() -> bool:
+    return bool(os.getenv("AWS_ACCESS_KEY_ID") or os.getenv("AWS_PROFILE"))
+
+
 def get_provider():
-    return ClaudeProvider() if os.getenv("ANTHROPIC_API_KEY") else MockProvider()
+    """Prefer a real Claude if any credential is available (Bedrock or direct API), else the
+    calibrated mock. Force a choice with SOEVAL_PROVIDER=bedrock|anthropic|mock."""
+    forced = os.getenv("SOEVAL_PROVIDER", "").lower()
+    if forced == "mock":
+        return MockProvider()
+    if forced == "bedrock" or (not forced and _has_aws()):
+        return BedrockProvider()
+    if forced == "anthropic" or os.getenv("ANTHROPIC_API_KEY"):
+        return ClaudeProvider()
+    return MockProvider()

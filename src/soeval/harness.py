@@ -13,7 +13,7 @@ import json
 import yaml
 
 from .config import REPORTS, STRATEGIES, TASKS_PATH
-from .providers import ClaudeProvider, MockProvider
+from .providers import BedrockProvider, ClaudeProvider, MockProvider
 from .validate import extract_json, field_accuracy, schema_adherent
 
 
@@ -46,11 +46,16 @@ def run(tasks: list[dict], provider, strategies=STRATEGIES) -> dict:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="structured-output reliability benchmark")
-    ap.add_argument("--provider", choices=["mock", "claude"], default="mock")
+    ap.add_argument("--provider", choices=["mock", "claude", "bedrock"], default="mock")
     args = ap.parse_args()
 
     tasks = yaml.safe_load(open(TASKS_PATH))["tasks"]
-    provider = ClaudeProvider() if args.provider == "claude" else MockProvider()
+    if args.provider == "bedrock":
+        provider = BedrockProvider()
+    elif args.provider == "claude":
+        provider = ClaudeProvider()
+    else:
+        provider = MockProvider()
     res = run(tasks, provider)
 
     REPORTS.mkdir(parents=True, exist_ok=True)
