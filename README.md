@@ -13,6 +13,13 @@ constrained decoding help*. This measures exactly that, per strategy.
 
 ---
 
+
+## Architecture
+
+![architecture](docs/assets/architecture.png)
+
+*Interactive/exportable version: [`docs/assets/architecture.html`](docs/assets/architecture.html).*
+
 ## The strategies (weakest → strongest constraint)
 
 | Strategy | What it does |
